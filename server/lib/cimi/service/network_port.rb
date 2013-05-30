@@ -17,9 +17,12 @@ class CIMI::Service::NetworkPort < CIMI::Service::Base
 
   def self.find(id, context)
     if id==:all
-      context.driver.network_ports(context.credentials, {:env=>context})
+      network_ports = context.driver.network_ports(context.credentials)
+      network_ports.map { |network_port| from_network_port(network_port, context) }.compact
     else
-      context.driver.network_ports(context.credentials, {:id=>id, :env=>context})
+      network_port = context.driver.network_ports(context.credentials, :id=>id)
+      raise CIMI::Model::NotFound unless network_port
+      from_network_port(network_port, context)
     end
   end
 

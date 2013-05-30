@@ -82,6 +82,7 @@ class CIMI::Service::Machine < CIMI::Service::Base
       :memory => memory || convert_instance_memory(instance.instance_profile, context),
       :disks => { :href => context.machine_url(instance.id)+"/disks"},
       :volumes => { :href=>context.machine_url(instance.id)+"/volumes"},
+      :networkInterfaces => { :href=>context.machine_url(instance.id)+"/networkInterfaces"},
       :operations => convert_instance_actions(instance, context)
     }
     if context.expand? :disks
@@ -89,6 +90,9 @@ class CIMI::Service::Machine < CIMI::Service::Base
     end
     if context.expand? :volumes
       machine_spec[:volumes] = CIMI::Service::MachineVolume.find(instance.id, context, :all)
+    end
+    if context.expand? :networkInterfaces
+      machine_spec[:networkInterfaces] = CIMI::Service::MachineNetworkInterface.find(instance.id, context, :all)
     end
     machine_spec[:realm] = instance.realm_id if instance.realm_id
     machine_spec[:machine_image] = { :href => context.machine_image_url(instance.image_id) } if instance.image_id
