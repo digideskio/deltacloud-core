@@ -341,6 +341,155 @@ module Deltacloud::Drivers::Vsphere
 
     alias :destroy_image :destroy_instance
 
+    def systems(credentials, opts={})
+      context = opts[:env]
+      id = 'id_123'
+      [
+        CIMI::Model::System.new(
+          :id          => context.system_url(id),
+          :name        => 'Ubuntu based LAMP stack',
+          :description => 'my desc',
+          :machines    => { :href => context.system_machines_url(id) },
+          :volumes     => { :href => context.system_volumes_url(id) },
+          :networks    => { :href => context.system_networks_url(id) },
+          :operations  => [
+            { :href => context.system_url("#{lplatform_id}/export"), :rel => "http://schemas.dmtf.org/cimi/1/action/export" },
+            { :href => context.system_url("#{lplatform_id}/start"), :rel => "http://schemas.dmtf.org/cimi/1/action/start" }
+          ]
+        )
+      ]
+    end
+
+    def import_system(credentials, opts={})
+      puts "import_system(#{opts})"
+      connection_options = {
+        :host => host_endpoint,
+        :user => credentials.user,
+        :password => credentials.password,
+        :insecure => true
+      }
+      vim = RbVmomi::VIM.connect connection_options
+      #vim.debug = true
+
+      datacenter = vim.serviceInstance.find_datacenter
+      host_folder = datacenter.hostFolder.children.first
+
+      options = {:uri => opts[:source]}
+      options[:vmName] = '' # make it default to ProductSection's product name or top-level entity ovf:id
+      options[:host] = host_folder.host.first
+      options[:vmFolder] = datacenter.vmFolder
+      options[:resourcePool] = host_folder.resourcePool
+      options[:datastore] = options[:host].datastore.first
+
+      vim.serviceContent.ovfManager.deployOVF options
+    end
+
+    def export_system(credentials, opts={})
+      puts "export_system(#{opts})"
+      # hard-code for now
+      vmName = 'DeltaCloud'
+      datacenter = 'RORTEST Datacentre'
+      destinationDir = '.'
+
+      # export to OVF using VMware API
+      vcenter_host = 'vcenter_host'
+      vcenter_user = 'vcenter_user'
+      vcenter_password = 'vcenter_password'
+      connection_options = {
+        :host     => vcenter_host,
+        :user     => vcenter_user,
+        :password => vcenter_password,
+        :insecure => true
+      }
+      vim = RbVmomi::VIM.connect connection_options
+      dc = vim.serviceInstance.find_datacenter(datacenter) or fail "datacenter not found"
+      vm = dc.find_vm(vmName) or fail "VM not found"
+
+      destinationDir = File.join(destinationDir, vmName)
+      Dir.mkdir(destinationDir)
+
+      # obtain lease for vm export to block other users from touching them
+      lease = vm.ExportVm
+      while !['done', 'error', 'ready'].member?(lease.state)
+        sleep 1
+      end
+      if lease.state == "error"
+        raise lease.error
+      end
+      leaseInfo = lease.info
+
+      # from async thread, send regular updates to the lease to prevent it from aborting prematurely
+      progress = 5
+      keepAliveThread = Thread.new do
+        while progress < 100
+          lease.HttpNfcLeaseProgress(:percent => progress)
+          lastKeepAlive = Time.now
+          while progress < 100 && (Time.now - lastKeepAlive).to_i < (leaseInfo.leaseTimeout / 2)
+            sleep 1
+          end
+        end
+      end
+
+      ovfFiles = leaseInfo.deviceUrl.map do |x|
+        next if !x.disk
+        url = x.url
+        if url =~ /(https?:\/\/)\*\//
+          url = url.gsub(/(https?:\/\/)(\*)\//, "\\1#{vim.host}/")
+        end
+        uri = URI.parse(url)
+
+        #proxy settings:
+        http_proxy = ENV['http_proxy']
+        proxy_uri = URI.parse(http_proxy) if http_proxy
+
+        if proxy_uri
+          proxy_addr = proxy_uri.host
+          proxy_port = proxy_uri.port
+          proxy_user = proxy_uri.user
+          proxy_pass = proxy_uri.password
+        end
+
+        http = Net::HTTP::Proxy(proxy_addr, proxy_port, proxy_user, proxy_pass).new(uri.host, uri.port)
+
+        http.read_timeout = 30 * 60
+        if uri.scheme == 'https'
+          http.use_ssl = true
+          http.verify_mode = OpenSSL::SSL::VERIFY_NONE
+        end
+        headers = {'cookie' => vim.cookie}
+        localFilename = File.join(destinationDir, x.targetId)
+        puts "Downloading disk to #{localFilename}"
+        s = 0
+        File.open(localFilename, 'w') do |fileIO|
+          http.get(uri.path, headers) do |bodySegment|
+            fileIO.write bodySegment
+            s += bodySegment.length;
+            #$stdout.write "."
+            #$stdout.flush
+          end
+        end
+
+        progress += 90 / leaseInfo.deviceUrl.length
+
+        {:size => s, :deviceId => x.key, :path => x.targetId}
+      end.compact
+
+      progress = 100
+      keepAliveThread.join
+      lease.HttpNfcLeaseComplete()
+
+      ovfMgr = vim.serviceContent.ovfManager
+      descriptor = ovfMgr.CreateDescriptor(
+        :obj => vm,
+        :cdp => {:ovfFiles => ovfFiles, :includeImageFiles => false}
+      )
+      File.open(File.join(destinationDir, "#{vmName}.ovf"), 'w') do |io|
+        io.write descriptor.ovfDescriptor
+      end
+
+      "http://cimi.example.org/ovf-packages/#{opts[:id]}" unless opts[:destination]
+    end
+
     exceptions do
 
       on /InvalidLogin/ do
