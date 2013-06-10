@@ -13,25 +13,9 @@
 # License for the specific language governing permissions and limitations
 # under the License.
 
-class CIMI::Model::Machine < CIMI::Model::Base
+class CIMI::Model::MachineNetworkInterfaceAddress < CIMI::Model::Base
 
-  # DC-specific Extension
-  text :realm, :required => false
-  # DC-specific extension
-  href :machine_image, :required => false
-
-  text :state
-  text :cpu
-
-  text :memory
-
-  collection :disks, :class => CIMI::Model::Disk
-  collection :volumes, :class => CIMI::Model::MachineVolume
-  collection :network_interfaces, :class => CIMI::Model::MachineNetworkInterface
-
-  array :meters do
-    scalar :href
-  end
+  href :address
 
   array :operations do
     scalar :rel, :href

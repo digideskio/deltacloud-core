@@ -69,6 +69,8 @@ require_relative './service/address_create'
 require_relative './service/network_template'
 require_relative './service/disk'
 require_relative './service/machine_volume'
+require_relative './service/machine_network_interface'
+require_relative './service/machine_network_interface_address'
 require_relative './service/resource_metadata'
 
 SERVICES = {
